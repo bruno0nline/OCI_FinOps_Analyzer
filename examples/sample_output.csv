@@ -1,2 +1,2 @@
-example_column
-example_value
+instance_name,cpu_mean_percent,mem_mean_percent,finops_recommendation
+vm-demo,10,20,DOWNSIZE

@@ -6,16 +6,44 @@ from datetime import datetime
 from docx import Document
 from docx.shared import Pt
 
+
 homedir = os.path.expanduser("~")
 DAYS = int(os.getenv("METRICS_DAYS", "30"))
 
 CSV_PATH = os.path.join(homedir, f"Relatorio_CPU_Memoria_media_{DAYS}d_multi_region.csv")
 DOCX_PATH = os.path.join(homedir, f"Relatorio_FinOps_CPU_Mem_{DAYS}d_multi_region.docx")
 
-# Valores aproximados por hora em USD (exemplo, ajuste se necessário)
-OCPU_PRICE_HOUR = 0.05
-MEM_GB_PRICE_HOUR = 0.003
-HOURS_MONTH = 730
+
+# Preços em BRL (R$) por hora, aproximados, baseados na tabela pública da Oracle
+# Referência: famílias de shapes mais comuns (E3/E4/E5/E6/A1/A2/X9).
+PRICE_MATRIX = {
+    "E5": {"ocpu": 0.165336,  "mem": 0.0110224},
+    "E6": {"ocpu": 0.165336,  "mem": 0.0110224},
+    "E4": {"ocpu": 0.13778,   "mem": 0.0082668},
+    "E3": {"ocpu": 0.13778,   "mem": 0.0082668},
+    "A1": {"ocpu": 0.055112,  "mem": 0.0082668},
+    "A2": {"ocpu": 0.0771568, "mem": 0.0110224},
+    "X9": {"ocpu": 0.220448,  "mem": 0.0082668},
+}
+
+
+HOURS_MONTH = 730  # aproximação usada pela própria Oracle em exemplos
+
+
+def infer_family(shape: str) -> str:
+    if not shape:
+        return "E4"
+    s = shape.upper()
+    for fam in ("E5", "E6", "E4", "E3", "A1", "A2", "X9"):
+        if fam in s:
+            return fam
+    return "E4"
+
+
+def get_unit_prices(shape: str):
+    fam = infer_family(shape)
+    prices = PRICE_MATRIX.get(fam, PRICE_MATRIX["E4"])
+    return prices["ocpu"], prices["mem"]
 
 
 def to_float(value):
@@ -27,15 +55,16 @@ def to_float(value):
         return None
 
 
-def estimate_monthly_cost(ocpus, mem_gb):
+def estimate_monthly_cost_brl(ocpus, mem_gb, shape):
     ocpus = ocpus or 0
     mem_gb = mem_gb or 0
-    hourly = ocpus * OCPU_PRICE_HOUR + mem_gb * MEM_GB_PRICE_HOUR
+    ocpu_price_hour, mem_price_hour = get_unit_prices(shape)
+    hourly = ocpus * ocpu_price_hour + mem_gb * mem_price_hour
     return hourly * HOURS_MONTH
 
 
-def format_money_usd(v):
-    return f"US$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+def format_money_brl(v):
+    return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 def load_rows():
@@ -62,6 +91,7 @@ def build_downsize_text(row):
     ocpus = to_float(row["ocpus"]) or 0
     mem_gb = to_float(row["memory_gb"]) or 0
 
+    # lógica simples para sugerir fator de redução
     fator = 0.5
     if cpu_mean < 5 and mem_mean < 40:
         fator = 0.25
@@ -69,8 +99,8 @@ def build_downsize_text(row):
     new_ocpus = max(1, ocpus * fator)
     new_mem = max(1, mem_gb * fator)
 
-    current_cost = estimate_monthly_cost(ocpus, mem_gb)
-    new_cost = estimate_monthly_cost(new_ocpus, new_mem)
+    current_cost = estimate_monthly_cost_brl(ocpus, mem_gb, shape)
+    new_cost = estimate_monthly_cost_brl(new_ocpus, new_mem, shape)
     savings = max(0, current_cost - new_cost)
 
     text = (
@@ -78,7 +108,7 @@ def build_downsize_text(row):
         f"Forma atual: {shape} | OCPUs: {ocpus} | Memória: {mem_gb} GB\n"
         f"Média CPU: {cpu_mean:.2f}% | Média Memória: {mem_mean:.2f}%\n"
         f"Sugestão: reduzir para ~{new_ocpus:.1f} OCPUs e ~{new_mem:.1f} GB de memória.\n"
-        f"Economia estimada: {format_money_usd(savings)}/mês.\n"
+        f"Economia estimada: {format_money_brl(savings)}/mês.\n"
     )
     return text, savings
 
@@ -100,8 +130,8 @@ def build_upscale_text(row):
     new_ocpus = ocpus * fator
     new_mem = mem_gb * fator
 
-    current_cost = estimate_monthly_cost(ocpus, mem_gb)
-    new_cost = estimate_monthly_cost(new_ocpus, new_mem)
+    current_cost = estimate_monthly_cost_brl(ocpus, mem_gb, shape)
+    new_cost = estimate_monthly_cost_brl(new_ocpus, new_mem, shape)
     extra = max(0, new_cost - current_cost)
 
     text = (
@@ -109,7 +139,7 @@ def build_upscale_text(row):
         f"Forma atual: {shape} | OCPUs: {ocpus} | Memória: {mem_gb} GB\n"
         f"CPU média/P95: {cpu_mean:.2f}% / {cpu_p95:.2f}% | Memória média/P95: {mem_mean:.2f}% / {mem_p95:.2f}%\n"
         f"Sugestão: avaliar aumento para ~{new_ocpus:.1f} OCPUs e ~{new_mem:.1f} GB de memória.\n"
-        f"Impacto estimado: +{format_money_usd(extra)}/mês.\n"
+        f"Impacto estimado: +{format_money_brl(extra)}/mês.\n"
     )
     return text, extra
 
@@ -127,6 +157,7 @@ def build_burstable_only_text(row):
     ocpus = to_float(row["ocpus"]) or 0
     mem_gb = to_float(row["memory_gb"]) or 0
 
+    # Se já é burstable com baseline configurada, pula
     if burst_enabled == "YES" and baseline_percent in ("12.5%", "50%", "100%"):
         return None, 0.0
 
@@ -143,8 +174,8 @@ def build_burstable_only_text(row):
     if not target or frac is None:
         return None, 0.0
 
-    current_cost = estimate_monthly_cost(ocpus, mem_gb)
-    new_cost = estimate_monthly_cost(ocpus * frac, mem_gb)
+    current_cost = estimate_monthly_cost_brl(ocpus, mem_gb, shape)
+    new_cost = estimate_monthly_cost_brl(ocpus * frac, mem_gb, shape)
     savings = max(0, current_cost - new_cost)
 
     text = (
@@ -152,7 +183,7 @@ def build_burstable_only_text(row):
         f"Forma: {shape} | OCPUs: {ocpus} | Burstable atual: {baseline_percent or 'Desativado'}\n"
         f"CPU média: {cpu_mean:.2f}%\n"
         f"Sugestão: avaliar conversão para instância expansível com baseline {target}.\n"
-        f"Economia estimada (se convertido): {format_money_usd(savings)}/mês.\n"
+        f"Economia estimada (se convertido): {format_money_brl(savings)}/mês.\n"
     )
     return text, savings
 
@@ -172,6 +203,7 @@ def generate_report():
     run.font.size = Pt(9)
 
     doc.add_paragraph("\nJanela de análise: últimos %d dias." % DAYS)
+    doc.add_paragraph("Valores estimados em real brasileiro (BRL), baseados na tabela pública de preços da Oracle para compute.")
 
     downsizes_texts = []
     upscales_texts = []
@@ -228,25 +260,29 @@ def generate_report():
     doc.add_heading("4. Resumo Financeiro Consolidado (Estimativa)", level=1)
 
     if total_down_savings > 0:
-        doc.add_paragraph(f"1. Reduções (Downsize): economia potencial de {format_money_usd(total_down_savings)}/mês.")
+        doc.add_paragraph(f"1. Reduções (Downsize): economia potencial de {format_money_brl(total_down_savings)}/mês.")
     else:
         doc.add_paragraph("1. Reduções (Downsize): nenhuma economia estimada.")
     if total_up_extra > 0:
-        doc.add_paragraph(f"2. Aumentos (Upscale): impacto adicional potencial de {format_money_usd(total_up_extra)}/mês.")
+        doc.add_paragraph(f"2. Aumentos (Upscale): impacto adicional potencial de {format_money_brl(total_up_extra)}/mês.")
     else:
         doc.add_paragraph("2. Aumentos (Upscale): nenhum aumento de custo estimado.")
     if total_burst_savings > 0:
-        doc.add_paragraph(f"3. Instâncias Expansíveis (Burstable): economia potencial de {format_money_usd(total_burst_savings)}/mês.")
+        doc.add_paragraph(f"3. Instâncias Expansíveis (Burstable): economia potencial de {format_money_brl(total_burst_savings)}/mês.")
     else:
-        doc.add_paragraph("3. Instâncias Expansíveis (Burstable): nenhuma economia estimada.")    
+        doc.add_paragraph("3. Instâncias Expansíveis (Burstable): nenhuma economia estimada.")
 
     net = total_down_savings + total_burst_savings - total_up_extra
     if net >= 0:
-        doc.add_paragraph(f"\nEconomia líquida potencial (estimada): {format_money_usd(net)}/mês.")
+        doc.add_paragraph(f"\nEconomia líquida potencial (estimada): {format_money_brl(net)}/mês.")
     else:
-        doc.add_paragraph(f"\nImpacto líquido potencial (estimado): +{format_money_usd(abs(net))}/mês.")
+        doc.add_paragraph(f"\nImpacto líquido potencial (estimado): +{format_money_brl(abs(net))}/mês.")
 
-    doc.add_paragraph("\nObservação: todos os valores são estimativas em USD baseadas em preços de tabela simplificados. Ajuste os valores de OCPU_PRICE_HOUR e MEM_GB_PRICE_HOUR conforme a realidade contratual do cliente.")
+    doc.add_paragraph(
+        "\nObservação: todos os valores são estimativas em BRL baseadas em preços de tabela simplificados. "
+        "Ajuste o mapeamento de preços no dicionário PRICE_MATRIX para refletir contratos ou descontos específicos de cada cliente. "
+        "Licenças de sistema operacional (por exemplo, Windows) não estão incluídas nesse cálculo."
+    )
 
     doc.save(DOCX_PATH)
     print(f"Relatório Word gerado: {DOCX_PATH}")
