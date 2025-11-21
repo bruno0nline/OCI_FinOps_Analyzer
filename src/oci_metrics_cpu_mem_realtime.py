@@ -7,60 +7,80 @@ from oci.monitoring.models import SummarizeMetricsDataDetails
 
 cfg = oci.config.from_file()
 tenancy_id = cfg["tenancy"]
-identity = oci.identity.IdentityClient(cfg)
-
-region = cfg.get("region")
-region_cfg = dict(cfg)
-compute = oci.core.ComputeClient(region_cfg)
-monitoring = oci.monitoring.MonitoringClient(region_cfg)
-
-now = datetime.now(timezone.utc)
-start = now - timedelta(minutes=30)
-end = now
-
-INTERVAL = "1m"
 
 
-def get_metric_stats(inst_id, metric_name):
-    query = f'{metric_name}[{INTERVAL}]{{resourceId = "{inst_id}"}}.mean()'
-    details = SummarizeMetricsDataDetails(
-        namespace="oci_computeagent",
-        query=query,
-        start_time=start,
-        end_time=end,
+def get_all_regions(identity_client):
+    resp = identity_client.list_region_subscriptions(tenancy_id)
+    return [r.region_name for r in resp.data]
+
+
+def get_all_compartments(identity_client):
+    result = oci.pagination.list_call_get_all_results(
+        identity_client.list_compartments,
+        tenancy_id,
+        compartment_id_in_subtree=True
     )
-    resp = monitoring.summarize_metrics_data(
-        compartment_id=tenancy_id,
-        summarize_metrics_data_details=details,
-    )
-    if not resp.data or not resp.data[0].aggregated_datapoints:
-        return None
-    values = [dp.value for dp in resp.data[0].aggregated_datapoints if dp.value is not None]
-    if not values:
-        return None
-    return sum(values) / len(values)
+    return [c for c in result.data if c.lifecycle_state == "ACTIVE"]
 
 
 def main():
-    print(f"Região atual: {region}")
-    instances = oci.pagination.list_call_get_all_results(
-        compute.list_instances,
-        compartment_id=tenancy_id,
-    ).data
+    identity = oci.identity.IdentityClient(cfg)
+    regions = get_all_regions(identity)
+    compartments = get_all_compartments(identity)
 
-    running = [i for i in instances if i.lifecycle_state == 'RUNNING']
-    if not running:
-        print("Nenhuma instância RUNNING encontrada.")
-        return
+    start = datetime.now(timezone.utc) - timedelta(minutes=30)
+    end = datetime.now(timezone.utc)
 
-    for inst in running:
-        cpu = get_metric_stats(inst.id, "CpuUtilization")
-        mem = get_metric_stats(inst.id, "MemoryUtilization")
-        print(f"""Instância: {inst.display_name}
-  CPU média (30min): {cpu if cpu is not None else 'no-data'}
-  MEM média (30min): {mem if mem is not None else 'no-data'}
-""")
+    print("Consulta rápida (30 min) de CPU/Memória para instâncias RUNNING.\n")
 
+    for region in regions:
+        print(f"===== Região: {region} =====")
+        region_cfg = dict(cfg)
+        region_cfg["region"] = region
+
+        compute = oci.core.ComputeClient(region_cfg)
+        monitoring = oci.monitoring.MonitoringClient(region_cfg)
+
+        for comp in compartments:
+            comp_id = comp.id
+            comp_name = comp.name
+
+            instances = oci.pagination.list_call_get_all_results(
+                compute.list_instances,
+                compartment_id=comp_id
+            ).data
+
+            running = [i for i in instances if i.lifecycle_state == "RUNNING"]
+            if not running:
+                continue
+
+            print(f"  Compartment: {comp_name}")
+
+            for inst in running:
+                print(f"  -> {inst.display_name}")
+
+                def get_metric(metric_name):
+                    query = f'{metric_name}[5m]{{resourceId = "{inst.id}"}}.mean()'
+                    details = SummarizeMetricsDataDetails(
+                        namespace="oci_computeagent",
+                        query=query,
+                        start_time=start,
+                        end_time=end,
+                    )
+                    resp = monitoring.summarize_metrics_data(
+                        compartment_id=comp_id,
+                        summarize_metrics_data_details=details,
+                    )
+                    if not resp.data or not resp.data[0].aggregated_datapoints:
+                        return None
+                    return resp.data[0].aggregated_datapoints[-1].value
+
+                cpu = get_metric("CpuUtilization")
+                mem = get_metric("MemoryUtilization")
+
+                print(f"     CPU={cpu if cpu is not None else 'sem dado'} % | MEM={mem if mem is not None else 'sem dado'} %")
+
+    print("\nFim da consulta.")
 
 if __name__ == "__main__":
     main()

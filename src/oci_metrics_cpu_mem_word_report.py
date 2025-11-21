@@ -6,304 +6,251 @@ from datetime import datetime
 from docx import Document
 from docx.shared import Pt
 
+homedir = os.path.expanduser("~")
 DAYS = int(os.getenv("METRICS_DAYS", "30"))
-HOME = os.path.expanduser("~")
 
-CSV_FILE = os.path.join(
-    HOME, f"Relatorio_CPU_Memoria_media_{DAYS}d_multi_region.csv"
-)
-DOCX_FILE = os.path.join(
-    HOME, f"Relatorio_FinOps_CPU_Mem_{DAYS}d_multi_region.docx"
-)
+CSV_PATH = os.path.join(homedir, f"Relatorio_CPU_Memoria_media_{DAYS}d_multi_region.csv")
+DOCX_PATH = os.path.join(homedir, f"Relatorio_FinOps_CPU_Mem_{DAYS}d_multi_region.docx")
 
-# ===== Config de custo (estimativa) =====
-# Valores padrão aproximados, baseados na lista pública de preços da OCI.
-# Ajuste via variáveis de ambiente para cada cliente/região:
-#   OCI_COST_OCPU_HOUR  (ex: 0.70 para R$/h)
-#   OCI_COST_MEM_GB_HOUR (ex: 0.03 para R$/h por GB)
-#   OCI_COST_CURRENCY    (ex: BRL, USD, etc.)
-CURRENCY = os.getenv("OCI_COST_CURRENCY", "BRL")
-COST_OCPU_HOUR = float(os.getenv("OCI_COST_OCPU_HOUR", "0.70"))
-COST_MEM_GB_HOUR = float(os.getenv("OCI_COST_MEM_GB_HOUR", "0.03"))
-DAYS_IN_MONTH = 30
+# Valores aproximados por hora em USD (exemplo, ajuste se necessário)
+OCPU_PRICE_HOUR = 0.05
+MEM_GB_PRICE_HOUR = 0.003
+HOURS_MONTH = 730
 
 
-def to_float(v):
+def to_float(value):
     try:
-        return float(v)
+        if value is None or value == "":
+            return None
+        return float(value)
     except Exception:
         return None
 
 
 def estimate_monthly_cost(ocpus, mem_gb):
-    if ocpus is None and mem_gb is None:
-        return None
-    oc = ocpus or 0
-    mem = mem_gb or 0
-    hourly = oc * COST_OCPU_HOUR + mem * COST_MEM_GB_HOUR
-    return hourly * 24 * DAYS_IN_MONTH
+    ocpus = ocpus or 0
+    mem_gb = mem_gb or 0
+    hourly = ocpus * OCPU_PRICE_HOUR + mem_gb * MEM_GB_PRICE_HOUR
+    return hourly * HOURS_MONTH
 
 
-def format_money(value):
-    if value is None:
-        return "N/A"
-    return f"{CURRENCY} {value:,.2f}"
+def format_money_usd(v):
+    return f"US$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def load_rows():
+    rows = []
+    if not os.path.exists(CSV_PATH):
+        print(f"CSV não encontrado: {CSV_PATH}")
+        return rows
+
+    with open(CSV_PATH, newline="") as f:
+        reader = csv.DictReader(f)
+        for r in reader:
+            rows.append(r)
+    return rows
 
 
 def build_downsize_text(row):
-    name = row["instance_name"]
-    region = row["region"]
-    compartment = row["compartment"]
+    inst = row["instance_name"]
     shape = row["shape"]
+    region = row["region"]
+    comp = row["compartment"]
 
-    ocpus = to_float(row["ocpus"])
-    mem_gb = to_float(row["memory_gb"])
-    cpu_mean = to_float(row["cpu_mean_percent"])
-    cpu_p95 = to_float(row["cpu_p95_percent"])
-    mem_mean = to_float(row["mem_mean_percent"])
-    mem_p95 = to_float(row["mem_p95_percent"])
-    baseline_percent = row.get("baseline_percent", "Desativada")
-    burstable = row.get("burstable_enabled", "NO")
+    cpu_mean = to_float(row["cpu_mean_percent"]) or 0
+    mem_mean = to_float(row["mem_mean_percent"]) or 0
+    ocpus = to_float(row["ocpus"]) or 0
+    mem_gb = to_float(row["memory_gb"]) or 0
 
-    linhas = []
-    linhas.append(f"Instância: {name}")
-    linhas.append(f"Região/Compartimento: {region} / {compartment}")
-    linhas.append(f"Shape atual: {shape} | OCPUs: {ocpus} | Memória: {mem_gb} GB")
-    linhas.append(
-        f"Uso médio de CPU: {cpu_mean}% (p95: {cpu_p95}%) | "
-        f"Uso médio de Memória: {mem_mean}% (p95: {mem_p95}%)"
+    fator = 0.5
+    if cpu_mean < 5 and mem_mean < 40:
+        fator = 0.25
+
+    new_ocpus = max(1, ocpus * fator)
+    new_mem = max(1, mem_gb * fator)
+
+    current_cost = estimate_monthly_cost(ocpus, mem_gb)
+    new_cost = estimate_monthly_cost(new_ocpus, new_mem)
+    savings = max(0, current_cost - new_cost)
+
+    text = (
+        f"Instância: {inst} | Região: {region} | Compartment: {comp}\n"
+        f"Forma atual: {shape} | OCPUs: {ocpus} | Memória: {mem_gb} GB\n"
+        f"Média CPU: {cpu_mean:.2f}% | Média Memória: {mem_mean:.2f}%\n"
+        f"Sugestão: reduzir para ~{new_ocpus:.1f} OCPUs e ~{new_mem:.1f} GB de memória.\n"
+        f"Economia estimada: {format_money_usd(savings)}/mês.\n"
     )
-    linhas.append(
-        f"Instância expansível (burstable): {burstable} | Linha de base: {baseline_percent}"
-    )
-
-    target_ocpus = ocpus
-    target_mem = mem_gb
-
-    if ocpus and cpu_mean is not None:
-        if cpu_mean < 5:
-            target_ocpus = max(1, int(round(ocpus * 0.25)))
-        elif cpu_mean < 10:
-            target_ocpus = max(1, int(round(ocpus * 0.5)))
-        elif cpu_mean < 20:
-            target_ocpus = max(1, ocpus - 1)
-
-        if target_ocpus < ocpus:
-            linhas.append(
-                f"➡ Recomenda-se avaliar a redução de CPU de {ocpus} para ~{target_ocpus} OCPUs,"
-                f" mantendo monitoramento após o ajuste."
-            )
-
-    if mem_gb and mem_mean is not None and mem_mean < 40:
-        target_mem = max(1, int(round(mem_gb * 0.7)))
-        linhas.append(
-            f"➡ Uso de memória estável abaixo de 40%. Avaliar reduzir memória de"
-            f" {mem_gb} GB para aproximadamente {target_mem} GB."
-        )
-
-    # Cálculo de economia estimada
-    custo_atual = estimate_monthly_cost(ocpus, mem_gb)
-    custo_sugerido = estimate_monthly_cost(target_ocpus, target_mem)
-    if custo_atual is not None and custo_sugerido is not None and custo_sugerido < custo_atual:
-        economia = custo_atual - custo_sugerido
-        linhas.append(
-            f"💰 Estimativa de economia mensal: {format_money(economia)} "
-            f"(de {format_money(custo_atual)} para {format_money(custo_sugerido)})."
-        )
-
-    if len(linhas) == 4:
-        linhas.append("➡ Oportunidade de redução identificada, mas requer análise manual detalhada.")
-
-    return "\n".join(linhas)
+    return text, savings
 
 
 def build_upscale_text(row):
-    name = row["instance_name"]
-    region = row["region"]
-    compartment = row["compartment"]
+    inst = row["instance_name"]
     shape = row["shape"]
+    region = row["region"]
+    comp = row["compartment"]
 
-    ocpus = to_float(row["ocpus"])
-    mem_gb = to_float(row["memory_gb"])
-    cpu_mean = to_float(row["cpu_mean_percent"])
-    cpu_p95 = to_float(row["cpu_p95_percent"])
-    mem_mean = to_float(row["mem_mean_percent"])
-    mem_p95 = to_float(row["mem_p95_percent"])
-    baseline_percent = row.get("baseline_percent", "Desativada")
-    burstable = row.get("burstable_enabled", "NO")
+    cpu_mean = to_float(row["cpu_mean_percent"]) or 0
+    mem_mean = to_float(row["mem_mean_percent"]) or 0
+    cpu_p95 = to_float(row["cpu_p95_percent"]) or 0
+    mem_p95 = to_float(row["mem_p95_percent"]) or 0
+    ocpus = to_float(row["ocpus"]) or 0
+    mem_gb = to_float(row["memory_gb"]) or 0
 
-    linhas = []
-    linhas.append(f"Instância: {name}")
-    linhas.append(f"Região/Compartimento: {region} / {compartment}")
-    linhas.append(f"Shape atual: {shape} | OCPUs: {ocpus} | Memória: {mem_gb} GB")
-    linhas.append(
-        f"Uso médio de CPU: {cpu_mean}% (p95: {cpu_p95}%) | "
-        f"Uso médio de Memória: {mem_mean}% (p95: {mem_p95}%)"
+    fator = 2.0
+    new_ocpus = ocpus * fator
+    new_mem = mem_gb * fator
+
+    current_cost = estimate_monthly_cost(ocpus, mem_gb)
+    new_cost = estimate_monthly_cost(new_ocpus, new_mem)
+    extra = max(0, new_cost - current_cost)
+
+    text = (
+        f"Instância: {inst} | Região: {region} | Compartment: {comp}\n"
+        f"Forma atual: {shape} | OCPUs: {ocpus} | Memória: {mem_gb} GB\n"
+        f"CPU média/P95: {cpu_mean:.2f}% / {cpu_p95:.2f}% | Memória média/P95: {mem_mean:.2f}% / {mem_p95:.2f}%\n"
+        f"Sugestão: avaliar aumento para ~{new_ocpus:.1f} OCPUs e ~{new_mem:.1f} GB de memória.\n"
+        f"Impacto estimado: +{format_money_usd(extra)}/mês.\n"
     )
-    linhas.append(
-        f"Instância expansível (burstable): {burstable} | Linha de base: {baseline_percent}"
-    )
-
-    target_ocpus = ocpus
-    target_mem = mem_gb
-
-    if ocpus and (cpu_p95 or 0) > 80:
-        target_ocpus = ocpus + max(1, int(round(ocpus * 0.5)))
-        linhas.append(
-            f"➡ CPU próxima de saturação (p95 > 80%). Avaliar aumento de OCPUs de"
-            f" {ocpus} para ~{target_ocpus} OCPUs ou mudança para forma maior."
-        )
-
-    if mem_gb and (mem_p95 or 0) > 85:
-        target_mem = int(round(mem_gb * 1.3))
-        linhas.append(
-            f"➡ Memória próxima de saturação (p95 > 85%). Avaliar aumento de memória de"
-            f" {mem_gb} GB para ~{target_mem} GB."
-        )
-
-    if burstable == "YES" and baseline_percent == "12.5%":
-        linhas.append(
-            "➡ Instância expansível com linha de base 12,5% e alto uso."
-            " Para cargas críticas, considerar converter para instância regular"
-            " (sem burst) com OCPUs dedicadas."
-        )
-
-    # Cálculo de aumento de custo estimado
-    custo_atual = estimate_monthly_cost(ocpus, mem_gb)
-    custo_sugerido = estimate_monthly_cost(target_ocpus, target_mem)
-    if custo_atual is not None and custo_sugerido is not None and custo_sugerido > custo_atual:
-        aumento = custo_sugerido - custo_atual
-        linhas.append(
-            f"💰 Estimativa de aumento de custo mensal: {format_money(aumento)} "
-            f"(de {format_money(custo_atual)} para {format_money(custo_sugerido)})."
-        )
-
-    if len(linhas) == 4:
-        linhas.append("➡ Oportunidade de aumento identificada, mas requer análise manual detalhada.")
-
-    return "\n".join(linhas)
+    return text, extra
 
 
 def build_burstable_only_text(row):
-    name = row["instance_name"]
-    region = row["region"]
-    compartment = row["compartment"]
+    inst = row["instance_name"]
     shape = row["shape"]
+    region = row["region"]
+    comp = row["compartment"]
 
-    ocpus = to_float(row["ocpus"])
-    cpu_mean = to_float(row["cpu_mean_percent"])
-    cpu_p95 = to_float(row["cpu_p95_percent"])
-    burstable = row.get("burstable_enabled", "NO")
-    baseline_percent = row.get("baseline_percent", "Desativada")
+    burst_enabled = row.get("burstable_enabled", "NO")
+    baseline_percent = (row.get("baseline_percent") or "").strip()
 
-    if burstable == "YES":
-        return None
+    cpu_mean = to_float(row["cpu_mean_percent"]) or 0
+    ocpus = to_float(row["ocpus"]) or 0
+    mem_gb = to_float(row["memory_gb"]) or 0
 
-    if cpu_mean is None:
-        return None
+    if burst_enabled == "YES" and baseline_percent in ("12.5%", "50%", "100%"):
+        return None, 0.0
 
-    if cpu_mean < 15 and (cpu_p95 or 0) < 60:
-        linhas = []
-        linhas.append(f"Instância: {name}")
-        linhas.append(f"Região/Compartimento: {region} / {compartment}")
-        linhas.append(f"Shape atual: {shape} | OCPUs: {ocpus}")
-        linhas.append(f"Uso médio de CPU: {cpu_mean}% (p95: {cpu_p95}%)")
-        if cpu_mean < 8:
-            alvo = "12,5%"
-        else:
-            alvo = "50%"
-        linhas.append(
-            "➡ A instância apresenta baixa utilização de CPU com picos moderados."
-            f" Se a forma suportar, considerar habilitar instância expansível com"
-            f" linha de base de {alvo}, mantendo o mesmo número de OCPUs provisionadas."
-        )
-        return "\n".join(linhas)
+    target = None
+    frac = None
 
-    return None
+    if cpu_mean < 8:
+        target = "12.5%"
+        frac = 0.125
+    elif cpu_mean < 35:
+        target = "50%"
+        frac = 0.5
+
+    if not target or frac is None:
+        return None, 0.0
+
+    current_cost = estimate_monthly_cost(ocpus, mem_gb)
+    new_cost = estimate_monthly_cost(ocpus * frac, mem_gb)
+    savings = max(0, current_cost - new_cost)
+
+    text = (
+        f"Instância: {inst} | Região: {region} | Compartment: {comp}\n"
+        f"Forma: {shape} | OCPUs: {ocpus} | Burstable atual: {baseline_percent or 'Desativado'}\n"
+        f"CPU média: {cpu_mean:.2f}%\n"
+        f"Sugestão: avaliar conversão para instância expansível com baseline {target}.\n"
+        f"Economia estimada (se convertido): {format_money_usd(savings)}/mês.\n"
+    )
+    return text, savings
 
 
-def main():
-    if not os.path.exists(CSV_FILE):
-        raise SystemExit(f"Arquivo CSV não encontrado: {CSV_FILE}")
-
-    with open(CSV_FILE, newline="") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-
-    downsizes = []
-    upscales = []
-    burstables = []
-
-    for row in rows:
-        rec = row.get("finops_recommendation", "KEEP")
-
-        if rec.startswith("DOWNSIZE"):
-            downsizes.append(build_downsize_text(row))
-        elif rec == "UPSCALE":
-            upscales.append(build_upscale_text(row))
-        else:
-            txt = build_burstable_only_text(row)
-            if txt:
-                burstables.append(txt)
+def generate_report():
+    rows = load_rows()
+    if not rows:
+        return
 
     doc = Document()
+    title = doc.add_heading("Relatório FinOps – CPU, Memória e Instâncias Expansíveis (OCI)", level=0)
+    title.alignment = 0
 
-    title = doc.add_heading(
-        f"Relatório FinOps – CPU e Memória (janela de {DAYS} dias)", level=0
-    )
-    title.alignment = 1
+    p = doc.add_paragraph()
+    run = p.add_run("Gerado automaticamente a partir das métricas OCI Monitoring. Usuário responsável: Bruno Mendes Augusto.")
+    run.italic = True
+    run.font.size = Pt(9)
 
-    p_info = doc.add_paragraph()
-    p_info.add_run(
-        f"Gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')} a partir das métricas "
-        "históricas de CPU e memória da OCI."
-    ).italic = True
+    doc.add_paragraph("\nJanela de análise: últimos %d dias." % DAYS)
 
-    p_cost = doc.add_paragraph()
-    p_cost.add_run(
-        "Valores de custo estimados com base em preços públicos de OCPU e memória. "
-        "Ajuste os parâmetros OCI_COST_OCPU_HOUR, OCI_COST_MEM_GB_HOUR e "
-        "OCI_COST_CURRENCY conforme a região/contrato do cliente."
-    ).font.size = Pt(8)
+    downsizes_texts = []
+    upscales_texts = []
+    burst_texts = []
 
-    doc.add_paragraph()
+    total_down_savings = 0.0
+    total_up_extra = 0.0
+    total_burst_savings = 0.0
 
-    if downsizes:
-        doc.add_heading("1. Recomendações de Redução (Downsize)", level=1)
-        for bloco in downsizes:
-            para = doc.add_paragraph()
-            para.style = "Normal"
-            run = para.add_run(bloco)
-            run.font.size = Pt(10)
-            doc.add_paragraph()
+    doc.add_heading("1. Recomendações de Redução (Downsize)", level=1)
+    for r in rows:
+        rec = r.get("finops_recommendation", "")
+        if rec.startswith("DOWNSIZE"):
+            text, savings = build_downsize_text(r)
+            downsizes_texts.append(text)
+            total_down_savings += savings
 
-    if upscales:
-        doc.add_heading("2. Recomendações de Aumento (Upscale)", level=1)
-        for bloco in upscales:
-            para = doc.add_paragraph()
-            run = para.add_run(bloco)
-            run.font.size = Pt(10)
-            doc.add_paragraph()
+    if downsizes_texts:
+        for t in downsizes_texts:
+            doc.add_paragraph(t)
+    else:
+        doc.add_paragraph("Nenhuma instância fortemente candidata a downsize identificada.")
+    doc.add_paragraph(" ")
 
-    if burstables:
-        doc.add_heading("3. Oportunidades para Instâncias Expansíveis (Burstable)", level=1)
-        for bloco in burstables:
-            para = doc.add_paragraph()
-            run = para.add_run(bloco)
-            run.font.size = Pt(10)
-            doc.add_paragraph()
+    doc.add_heading("2. Recomendações de Aumento (Upscale)", level=1)
+    for r in rows:
+        rec = r.get("finops_recommendation", "")
+        if rec == "UPSCALE":
+            text, extra = build_upscale_text(r)
+            upscales_texts.append(text)
+            total_up_extra += extra
 
-    if not (downsizes or upscales or burstables):
-        doc.add_paragraph(
-            "Nenhuma recomendação automática foi gerada. As métricas indicam ambiente estável "
-            "ou requerem análise manual mais detalhada."
-        )
+    if upscales_texts:
+        for t in upscales_texts:
+            doc.add_paragraph(t)
+    else:
+        doc.add_paragraph("Nenhuma instância com forte indicação de upscale encontrada.")
+    doc.add_paragraph(" ")
 
-    doc.save(DOCX_FILE)
+    doc.add_heading("3. Oportunidades para Instâncias Expansíveis (Burstable)", level=1)
+    for r in rows:
+        burst_text, savings = build_burstable_only_text(r)
+        if burst_text:
+            burst_texts.append(burst_text)
+            total_burst_savings += savings
 
-    print("✅ Relatório DOCX gerado com sucesso:")
-    print(f"   {DOCX_FILE}")
+    if burst_texts:
+        for t in burst_texts:
+            doc.add_paragraph(t)
+    else:
+        doc.add_paragraph("Nenhuma oportunidade clara para conversão em instância expansível foi identificada.")
+    doc.add_paragraph(" ")
+
+    doc.add_heading("4. Resumo Financeiro Consolidado (Estimativa)", level=1)
+
+    if total_down_savings > 0:
+        doc.add_paragraph(f"1. Reduções (Downsize): economia potencial de {format_money_usd(total_down_savings)}/mês.")
+    else:
+        doc.add_paragraph("1. Reduções (Downsize): nenhuma economia estimada.")
+    if total_up_extra > 0:
+        doc.add_paragraph(f"2. Aumentos (Upscale): impacto adicional potencial de {format_money_usd(total_up_extra)}/mês.")
+    else:
+        doc.add_paragraph("2. Aumentos (Upscale): nenhum aumento de custo estimado.")
+    if total_burst_savings > 0:
+        doc.add_paragraph(f"3. Instâncias Expansíveis (Burstable): economia potencial de {format_money_usd(total_burst_savings)}/mês.")
+    else:
+        doc.add_paragraph("3. Instâncias Expansíveis (Burstable): nenhuma economia estimada.")    
+
+    net = total_down_savings + total_burst_savings - total_up_extra
+    if net >= 0:
+        doc.add_paragraph(f"\nEconomia líquida potencial (estimada): {format_money_usd(net)}/mês.")
+    else:
+        doc.add_paragraph(f"\nImpacto líquido potencial (estimado): +{format_money_usd(abs(net))}/mês.")
+
+    doc.add_paragraph("\nObservação: todos os valores são estimativas em USD baseadas em preços de tabela simplificados. Ajuste os valores de OCPU_PRICE_HOUR e MEM_GB_PRICE_HOUR conforme a realidade contratual do cliente.")
+
+    doc.save(DOCX_PATH)
+    print(f"Relatório Word gerado: {DOCX_PATH}")
 
 
 if __name__ == "__main__":
-    main()
+    generate_report()

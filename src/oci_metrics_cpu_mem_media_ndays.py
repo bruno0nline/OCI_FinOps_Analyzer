@@ -1,259 +1,194 @@
 
 import os
-import csv
 import time
+import csv
 from datetime import datetime, timedelta, timezone
 
 import oci
 from oci.monitoring.models import SummarizeMetricsDataDetails
-
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill
 
-# ===== CONFIGURAÇÕES =====
-DAYS = int(os.getenv("METRICS_DAYS", "30"))   # dias de análise
-INTERVAL = "1h"                               # granularidade das métricas
-OUTPUT_DIR = os.path.expanduser("~")          # salvar na home do usuário
-
-CSV_FILE = os.path.join(
-    OUTPUT_DIR, f"Relatorio_CPU_Memoria_media_{DAYS}d_multi_region.csv"
-)
-XLSX_FILE = os.path.join(
-    OUTPUT_DIR, f"Relatorio_CPU_Memoria_media_{DAYS}d_multi_region.xlsx"
-)
-
-# Limiares FinOps
-CPU_LOW = 20.0
-CPU_HIGH = 70.0
-MEM_LOW = 40.0
-MEM_HIGH = 80.0
-# =========================
-
 cfg = oci.config.from_file()
 tenancy_id = cfg["tenancy"]
-identity = oci.identity.IdentityClient(cfg)
+homedir = os.path.expanduser("~")
 
-# Regiões assinadas na tenancy
-regions = identity.list_region_subscriptions(tenancy_id).data
+DAYS = int(os.getenv("METRICS_DAYS", "30"))
 
-# Compartimentos (root + filhos)
-compartments = oci.pagination.list_call_get_all_results(
-    identity.list_compartments,
-    tenancy_id,
-    compartment_id_in_subtree=True,
-    access_level="ANY",
-).data
-compartments.append(identity.get_compartment(tenancy_id).data)  # root
+CSV_PATH = os.path.join(homedir, f"Relatorio_CPU_Memoria_media_{DAYS}d_multi_region.csv")
+XLSX_PATH = os.path.join(homedir, f"Relatorio_CPU_Memoria_media_{DAYS}d_multi_region.xlsx")
 
-now = datetime.now(timezone.utc)
-start = now - timedelta(days=DAYS)
-end = now
+MAX_RETRIES = 3
+RETRY_SLEEP = 3
 
 
-def calc_mean_p95(values):
+def get_all_regions(identity_client):
+    resp = identity_client.list_region_subscriptions(tenancy_id)
+    return [r.region_name for r in resp.data]
+
+
+def get_all_compartments(identity_client):
+    result = oci.pagination.list_call_get_all_results(
+        identity_client.list_compartments,
+        tenancy_id,
+        compartment_id_in_subtree=True
+    )
+    return [c for c in result.data if c.lifecycle_state == "ACTIVE"]
+
+
+def summarize_with_retry(monitoring, details, compartment_ocid):
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            return monitoring.summarize_metrics_data(
+                compartment_id=compartment_ocid,
+                summarize_metrics_data_details=details,
+            )
+        except oci.exceptions.ServiceError as e:
+            if e.status == 429 and attempt < MAX_RETRIES:
+                print(f"  - 429 TooManyRequests para {details.query}, tentativa {attempt}/{MAX_RETRIES}, aguardando {RETRY_SLEEP}s...")
+                time.sleep(RETRY_SLEEP)
+                continue
+            raise
+
+
+def extract_mean_and_p95(datapoints):
+    values = [dp.value for dp in datapoints if dp.value is not None]
     if not values:
         return None, None
     values_sorted = sorted(values)
-    n = len(values_sorted)
-    mean = sum(values_sorted) / n
-    idx_p95 = int(n * 0.95) - 1
-    idx_p95 = max(0, min(idx_p95, n - 1))
-    p95 = values_sorted[idx_p95]
+    mean = sum(values_sorted) / len(values_sorted)
+    idx = int(round(0.95 * (len(values_sorted) - 1)))
+    p95 = values_sorted[idx]
     return mean, p95
 
 
-def get_metric_stats(monitoring_client, compartment_id, inst_id, metric_name):
-    query = f'{metric_name}[{INTERVAL}]{{resourceId = "{inst_id}"}}.mean()'
+def get_metric_stats(monitoring, compartment_ocid, inst_id, metric_name, start, end):
+    query = f'{metric_name}[5m]{{resourceId = "{inst_id}"}}.mean()'
     details = SummarizeMetricsDataDetails(
         namespace="oci_computeagent",
         query=query,
         start_time=start,
         end_time=end,
     )
-
-    max_retries = 4
-    resp = None
-
-    for attempt in range(1, max_retries + 1):
-        try:
-            resp = monitoring_client.summarize_metrics_data(
-                compartment_id=compartment_id,
-                summarize_metrics_data_details=details,
-            )
-            break
-        except oci.exceptions.ServiceError as e:
-            if e.status == 429:
-                wait = 5 * (2 ** (attempt - 1))
-                print(
-                    f"      - 429 TooManyRequests para {metric_name}, "
-                    f"tentativa {attempt}/{max_retries}, aguardando {wait}s..."
-                )
-                time.sleep(wait)
-                continue
-            print(f"      - Erro ao consultar {metric_name}: {e.message}")
-            return None, None
-
-    if resp is None or not resp.data or not resp.data[0].aggregated_datapoints:
+    resp = summarize_with_retry(monitoring, details, compartment_ocid)
+    if not resp.data or not resp.data[0].aggregated_datapoints:
         return None, None
-
-    dps = resp.data[0].aggregated_datapoints
-    values = [dp.value for dp in dps if dp.value is not None]
-
-    if not values:
-        return None, None
-
-    return calc_mean_p95(values)
+    return extract_mean_and_p95(resp.data[0].aggregated_datapoints)
 
 
-def classify_cpu(cpu_mean, cpu_p95):
-    if cpu_mean is None:
-        return "NO-DATA"
-    metric = max(cpu_mean, cpu_p95 or cpu_mean)
-    if metric < CPU_LOW:
-        return "LOW"
-    if metric > CPU_HIGH:
-        return "HIGH"
-    return "OK"
-
-
-def classify_mem(mem_mean, mem_p95):
-    if mem_mean is None:
-        return "NO-DATA"
-    metric = max(mem_mean, mem_p95 or mem_mean)
-    if metric < MEM_LOW:
-        return "LOW"
-    if metric > MEM_HIGH:
-        return "HIGH"
-    return "OK"
-
-
-def finops_recommendation(cpu_flag, mem_flag):
-    if cpu_flag == "HIGH" or mem_flag == "HIGH":
-        return "UPSCALE"
-    if cpu_flag == "LOW" and mem_flag == "LOW":
-        return "DOWNSIZE-STRONG"
-    if cpu_flag == "LOW":
-        return "DOWNSIZE"
-    if mem_flag == "LOW":
-        return "DOWNSIZE-MEM"
-    return "KEEP"
-
-
-def parse_baseline(shape_cfg):
-    '''
-    Interpretação correta de baseline:
-    - None ou BASELINE_1_1 -> NÃO expansível (linha de base desativada)
-    - BASELINE_1_8         -> expansível 12.5%
-    - BASELINE_1_2         -> expansível 50%
-    '''
-    if not shape_cfg:
-        return "Desativada", "NO", "N/A"
-
-    baseline = getattr(shape_cfg, "baseline_ocpu_utilization", None)
-    if not baseline or baseline == "BASELINE_1_1":
-        # Tratar como instância normal, sem burst
-        return "Desativada", "NO", baseline or "N/A"
+def get_burstable_info(instance):
+    # baseline_ocpu_utilization:
+    #   - None           -> não expansível
+    #   - BASELINE_1_8   -> 12.5%
+    #   - BASELINE_1_2   -> 50%
+    #   - BASELINE_1_1   -> 100% (instância regular)
+    baseline = getattr(instance, "baseline_ocpu_utilization", None)
+    if not baseline:
+        return "NO", "Desativada"
 
     mapping = {
         "BASELINE_1_8": "12.5%",
         "BASELINE_1_2": "50%",
+        "BASELINE_1_1": "100%",
     }
-    human = mapping.get(baseline, baseline)
-    return human, "YES", baseline
+    perc = mapping.get(baseline, baseline)
+    enabled = "YES" if baseline in mapping else "NO"
+    return enabled, perc
 
 
-def generate_excel(headers, rows):
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "FinOps_CPU_Mem"
+def finops_recommendation(cpu_mean, cpu_p95, mem_mean, mem_p95):
+    if cpu_mean is None and mem_mean is None:
+        return "KEEP"
 
-    ws.append(headers)
+    cpu_mean = cpu_mean or 0
+    cpu_p95 = cpu_p95 or 0
+    mem_mean = mem_mean or 0
+    mem_p95 = mem_p95 or 0
 
-    green = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-    red   = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-    yellow= PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+    if cpu_mean < 5 and mem_mean < 40:
+        return "DOWNSIZE-STRONG"
+    if cpu_mean < 15 and mem_mean < 60:
+        return "DOWNSIZE"
+    if cpu_mean < 25 and mem_mean < 40:
+        return "DOWNSIZE-MEM"
 
-    rec_col = headers.index("finops_recommendation") + 1
+    if cpu_p95 > 80 or mem_p95 > 85:
+        return "UPSCALE"
 
-    for row in rows:
-        ws.append([row[h] for h in headers])
-        rec = row["finops_recommendation"]
-        r = ws.max_row
-
-        if rec == "KEEP":
-            ws.cell(row=r, column=rec_col).fill = green
-        elif rec == "UPSCALE":
-            ws.cell(row=r, column=rec_col).fill = yellow
-        elif rec.startswith("DOWNSIZE"):
-            ws.cell(row=r, column=rec_col).fill = red
-
-    wb.save(XLSX_FILE)
+    return "KEEP"
 
 
 def main():
-    rows = []
-    idx = 0
+    identity = oci.identity.IdentityClient(cfg)
+    regions = get_all_regions(identity)
+    compartments = get_all_compartments(identity)
 
-    print(f"Coletando CPU/Mem dos últimos {DAYS} dias...\n")
+    start = datetime.now(timezone.utc) - timedelta(days=DAYS)
+    end = datetime.now(timezone.utc)
+
+    print(f"Coletando médias de CPU/Mem dos últimos {DAYS} dias...")
+    print(f"Total de compartments ativos: {len(compartments)}")
+
+    rows = []
 
     for region in regions:
-        region_name = region.region_name
-        print(f"\n===== Região: {region_name} =====")
-
+        print(f"\n===== Região: {region} =====")
         region_cfg = dict(cfg)
-        region_cfg["region"] = region_name
+        region_cfg["region"] = region
+
         compute = oci.core.ComputeClient(region_cfg)
         monitoring = oci.monitoring.MonitoringClient(region_cfg)
 
-        for compartment in compartments:
-            comp_id = compartment.id
-            comp_name = compartment.name
+        for comp in compartments:
+            comp_id = comp.id
+            comp_name = comp.name
 
             try:
                 instances = oci.pagination.list_call_get_all_results(
                     compute.list_instances,
-                    compartment_id=comp_id,
+                    compartment_id=comp_id
                 ).data
-            except Exception as e:
-                print(f"  [!] Erro ao listar instâncias em '{comp_name}': {e}")
+            except oci.exceptions.ServiceError as e:
+                print(f"  [WARN] Erro ao listar instâncias no compartment {comp_name}: {e}")
                 continue
 
-            running = [i for i in instances if i.lifecycle_state == 'RUNNING']
+            running = [i for i in instances if i.lifecycle_state == "RUNNING"]
             if not running:
                 continue
 
-            print(f"  Compartimento: {comp_name} | RUNNING: {len(running)}")
+            print(f"  Compartment: {comp_name} | Instâncias RUNNING: {len(running)}")
 
             for inst in running:
-                idx += 1
-                print(f"    [{idx}] {inst.display_name}")
-
-                shape = inst.shape
-                shape_cfg = inst.shape_config
-
-                if shape_cfg:
-                    ocpus = shape_cfg.ocpus
-                    mem_gb = shape_cfg.memory_in_gbs
-                else:
-                    ocpus = None
-                    mem_gb = None
-
-                baseline_percent, burstable_enabled, baseline_raw = parse_baseline(shape_cfg)
+                print(f"  -> [{inst.display_name}]")
 
                 cpu_mean, cpu_p95 = get_metric_stats(
-                    monitoring, inst.compartment_id, inst.id, "CpuUtilization"
+                    monitoring,
+                    comp_id,
+                    inst.id,
+                    "CpuUtilization",
+                    start,
+                    end,
                 )
-
                 mem_mean, mem_p95 = get_metric_stats(
-                    monitoring, inst.compartment_id, inst.id, "MemoryUtilization"
+                    monitoring,
+                    comp_id,
+                    inst.id,
+                    "MemoryUtilization",
+                    start,
+                    end,
                 )
 
-                cpu_flag = classify_cpu(cpu_mean, cpu_p95)
-                mem_flag = classify_mem(mem_mean, mem_p95)
-                recommendation = finops_recommendation(cpu_flag, mem_flag)
+                shape = inst.shape
+                ocpus = getattr(inst.shape_config, "ocpus", None) if inst.shape_config else None
+                mem_gb = getattr(inst.shape_config, "memory_in_gbs", None) if inst.shape_config else None
+
+                burstable_enabled, baseline_percent = get_burstable_info(inst)
+                baseline_raw = getattr(inst, "baseline_ocpu_utilization", None) or ""
+
+                rec = finops_recommendation(cpu_mean, cpu_p95, mem_mean, mem_p95)
 
                 rows.append({
-                    "region": region_name,
+                    "region": region,
                     "compartment": comp_name,
                     "instance_name": inst.display_name,
                     "instance_ocid": inst.id,
@@ -263,31 +198,73 @@ def main():
                     "burstable_enabled": burstable_enabled,
                     "baseline_percent": baseline_percent,
                     "baseline_raw": baseline_raw,
-                    "cpu_mean_percent": round(cpu_mean, 2) if cpu_mean else "no-data",
-                    "cpu_p95_percent": round(cpu_p95, 2) if cpu_p95 else "no-data",
-                    "mem_mean_percent": round(mem_mean, 2) if mem_mean else "no-data",
-                    "mem_p95_percent": round(mem_p95, 2) if mem_p95 else "no-data",
-                    "cpu_flag": cpu_flag,
-                    "mem_flag": mem_flag,
-                    "finops_recommendation": recommendation,
+                    "cpu_mean_percent": cpu_mean,
+                    "cpu_p95_percent": cpu_p95,
+                    "mem_mean_percent": mem_mean,
+                    "mem_p95_percent": mem_p95,
+                    "finops_recommendation": rec,
                 })
 
     if not rows:
-        print("Nenhuma instância encontrada.")
+        print("Nenhuma instância RUNNING encontrada na tenancy.")
         return
 
-    headers = list(rows[0].keys())
+    fieldnames = [
+        "region",
+        "compartment",
+        "instance_name",
+        "instance_ocid",
+        "shape",
+        "ocpus",
+        "memory_gb",
+        "burstable_enabled",
+        "baseline_percent",
+        "baseline_raw",
+        "cpu_mean_percent",
+        "cpu_p95_percent",
+        "mem_mean_percent",
+        "mem_p95_percent",
+        "finops_recommendation",
+    ]
 
-    with open(CSV_FILE, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=headers)
+    with open(CSV_PATH, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(rows)
+        for r in rows:
+            writer.writerow(r)
 
-    generate_excel(headers, rows)
+    print(f"\n✅ CSV gerado: {CSV_PATH}")
 
-    print("\n✅ Relatórios gerados:")
-    print(f"➡ CSV : {CSV_FILE}")
-    print(f"➡ XLSX: {XLSX_FILE}")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "CPU_Mem_FinOps"
+
+    ws.append(fieldnames)
+
+    fill_keep = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    fill_down = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+    fill_up = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+    fill_header = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
+
+    for cell in ws[1]:
+        cell.fill = fill_header
+
+    for r in rows:
+        ws.append([r[col] for col in fieldnames])
+        row_idx = ws.max_row
+        rec = r["finops_recommendation"]
+
+        if rec.startswith("DOWNSIZE"):
+            style = fill_down
+        elif rec == "UPSCALE":
+            style = fill_up
+        else:
+            style = fill_keep
+
+        ws[f"P{row_idx}"].fill = style
+
+    wb.save(XLSX_PATH)
+    print(f"✅ XLSX gerado: {XLSX_PATH}")
 
 
 if __name__ == "__main__":
