@@ -138,6 +138,30 @@ def finops_recommendation(cpu_flag, mem_flag):
     return "KEEP"
 
 
+def parse_baseline(shape_cfg):
+    """
+    Converte o baseline do OCI para algo legível:
+    - None                        -> ("Desativada", "NO", "N/A")
+    - BASELINE_1_8 (12.5%)        -> ("12.5%",    "YES", "BASELINE_1_8")
+    - BASELINE_1_2 (50%)          -> ("50%",      "YES", "BASELINE_1_2")
+    - BASELINE_1_1 (100% / full)  -> ("100%",     "YES", "BASELINE_1_1")
+    """
+    if not shape_cfg:
+        return "Desativada", "NO", "N/A"
+
+    baseline = getattr(shape_cfg, "baseline_ocpu_utilization", None)
+    if not baseline:
+        return "Desativada", "NO", "N/A"
+
+    mapping = {
+        "BASELINE_1_8": "12.5%",
+        "BASELINE_1_2": "50%",
+        "BASELINE_1_1": "100%",
+    }
+    human = mapping.get(baseline, baseline)
+    return human, "YES", baseline
+
+
 def generate_excel(headers, rows):
     wb = Workbook()
     ws = wb.active
@@ -210,14 +234,11 @@ def main():
                 if shape_cfg:
                     ocpus = shape_cfg.ocpus
                     mem_gb = shape_cfg.memory_in_gbs
-                    baseline = getattr(shape_cfg, "baseline_ocpu_utilization", None)
                 else:
                     ocpus = None
                     mem_gb = None
-                    baseline = None
 
-                burstable = "YES" if baseline else "NO"
-                baseline_str = baseline if baseline else "N/A"
+                baseline_percent, burstable_enabled, baseline_raw = parse_baseline(shape_cfg)
 
                 cpu_mean, cpu_p95 = get_metric_stats(
                     monitoring, inst.compartment_id, inst.id, "CpuUtilization"
@@ -239,8 +260,9 @@ def main():
                     "shape": shape,
                     "ocpus": ocpus,
                     "memory_gb": mem_gb,
-                    "burstable": burstable,
-                    "baseline_ocpu_utilization": baseline_str,
+                    "burstable_enabled": burstable_enabled,      # YES/NO
+                    "baseline_percent": baseline_percent,        # Desativada / 12.5% / 50% / 100%
+                    "baseline_raw": baseline_raw,                # BASELINE_1_8 / BASELINE_1_2 / BASELINE_1_1 / N/A
                     "cpu_mean_percent": round(cpu_mean, 2) if cpu_mean else "no-data",
                     "cpu_p95_percent": round(cpu_p95, 2) if cpu_p95 else "no-data",
                     "mem_mean_percent": round(mem_mean, 2) if mem_mean else "no-data",
