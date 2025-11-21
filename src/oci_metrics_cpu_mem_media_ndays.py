@@ -1,4 +1,3 @@
-
 import os
 import csv
 import time
@@ -206,8 +205,19 @@ def main():
                 print(f"    [{idx}] {inst.display_name}")
 
                 shape = inst.shape
-                ocpus = inst.shape_config.ocpus if inst.shape_config else None
-                mem_gb = inst.shape_config.memory_in_gbs if inst.shape_config else None
+                shape_cfg = inst.shape_config
+
+                if shape_cfg:
+                    ocpus = shape_cfg.ocpus
+                    mem_gb = shape_cfg.memory_in_gbs
+                    baseline = getattr(shape_cfg, "baseline_ocpu_utilization", None)
+                else:
+                    ocpus = None
+                    mem_gb = None
+                    baseline = None
+
+                burstable = "YES" if baseline else "NO"
+                baseline_str = baseline if baseline else "N/A"
 
                 cpu_mean, cpu_p95 = get_metric_stats(
                     monitoring, inst.compartment_id, inst.id, "CpuUtilization"
@@ -229,6 +239,8 @@ def main():
                     "shape": shape,
                     "ocpus": ocpus,
                     "memory_gb": mem_gb,
+                    "burstable": burstable,
+                    "baseline_ocpu_utilization": baseline_str,
                     "cpu_mean_percent": round(cpu_mean, 2) if cpu_mean else "no-data",
                     "cpu_p95_percent": round(cpu_p95, 2) if cpu_p95 else "no-data",
                     "mem_mean_percent": round(mem_mean, 2) if mem_mean else "no-data",
