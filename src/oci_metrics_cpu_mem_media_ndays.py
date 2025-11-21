@@ -1,3 +1,4 @@
+
 import os
 import csv
 import time
@@ -139,12 +140,12 @@ def finops_recommendation(cpu_flag, mem_flag):
 
 
 def parse_baseline(shape_cfg):
-    """
+    '''
     Interpretação correta de baseline:
     - None ou BASELINE_1_1 -> NÃO expansível (linha de base desativada)
     - BASELINE_1_8         -> expansível 12.5%
     - BASELINE_1_2         -> expansível 50%
-    """
+    '''
     if not shape_cfg:
         return "Desativada", "NO", "N/A"
 
@@ -259,9 +260,9 @@ def main():
                     "shape": shape,
                     "ocpus": ocpus,
                     "memory_gb": mem_gb,
-                    "burstable_enabled": burstable_enabled,      # YES/NO
-                    "baseline_percent": baseline_percent,        # Desativada / 12.5% / 50%
-                    "baseline_raw": baseline_raw,                # BASELINE_1_8 / BASELINE_1_2 / N/A / BASELINE_1_1
+                    "burstable_enabled": burstable_enabled,
+                    "baseline_percent": baseline_percent,
+                    "baseline_raw": baseline_raw,
                     "cpu_mean_percent": round(cpu_mean, 2) if cpu_mean else "no-data",
                     "cpu_p95_percent": round(cpu_p95, 2) if cpu_p95 else "no-data",
                     "mem_mean_percent": round(mem_mean, 2) if mem_mean else "no-data",
@@ -277,13 +278,11 @@ def main():
 
     headers = list(rows[0].keys())
 
-    # CSV
     with open(CSV_FILE, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=headers)
         writer.writeheader()
         writer.writerows(rows)
 
-    # Excel com cores
     generate_excel(headers, rows)
 
     print("\n✅ Relatórios gerados:")
