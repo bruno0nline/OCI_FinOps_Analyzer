@@ -1,4 +1,3 @@
-
 import os
 import csv
 from datetime import datetime
@@ -14,8 +13,7 @@ CSV_PATH = os.path.join(homedir, f"Relatorio_CPU_Memoria_media_{DAYS}d_multi_reg
 DOCX_PATH = os.path.join(homedir, f"Relatorio_FinOps_CPU_Mem_{DAYS}d_multi_region.docx")
 
 
-# Preços em BRL (R$) por hora, aproximados, baseados na tabela pública da Oracle
-# Referência: famílias de shapes mais comuns (E3/E4/E5/E6/A1/A2/X9).
+# Preços em BRL (R$) por hora – tabela pública Oracle (estimativa)
 PRICE_MATRIX = {
     "E5": {"ocpu": 0.165336,  "mem": 0.0110224},
     "E6": {"ocpu": 0.165336,  "mem": 0.0110224},
@@ -26,8 +24,7 @@ PRICE_MATRIX = {
     "X9": {"ocpu": 0.220448,  "mem": 0.0082668},
 }
 
-
-HOURS_MONTH = 730  # aproximação usada pela própria Oracle em exemplos
+HOURS_MONTH = 730
 
 
 def infer_family(shape: str) -> str:
@@ -48,7 +45,7 @@ def get_unit_prices(shape: str):
 
 def to_float(value):
     try:
-        if value is None or value == "":
+        if value in (None, "", "no-data", "NO-DATA"):
             return None
         return float(value)
     except Exception:
@@ -80,18 +77,13 @@ def load_rows():
     return rows
 
 
-def build_downsize_text(row):
-    inst = row["instance_name"]
-    shape = row["shape"]
-    region = row["region"]
-    comp = row["compartment"]
-
+def build_downsize(row):
     cpu_mean = to_float(row["cpu_mean_percent"]) or 0
     mem_mean = to_float(row["mem_mean_percent"]) or 0
     ocpus = to_float(row["ocpus"]) or 0
     mem_gb = to_float(row["memory_gb"]) or 0
+    shape = row["shape"]
 
-    # lógica simples para sugerir fator de redução
     fator = 0.5
     if cpu_mean < 5 and mem_mean < 40:
         fator = 0.25
@@ -103,89 +95,52 @@ def build_downsize_text(row):
     new_cost = estimate_monthly_cost_brl(new_ocpus, new_mem, shape)
     savings = max(0, current_cost - new_cost)
 
-    text = (
-        f"Instância: {inst} | Região: {region} | Compartment: {comp}\n"
-        f"Forma atual: {shape} | OCPUs: {ocpus} | Memória: {mem_gb} GB\n"
-        f"Média CPU: {cpu_mean:.2f}% | Média Memória: {mem_mean:.2f}%\n"
-        f"Sugestão: reduzir para ~{new_ocpus:.1f} OCPUs e ~{new_mem:.1f} GB de memória.\n"
-        f"Economia estimada: {format_money_brl(savings)}/mês.\n"
-    )
-    return text, savings
+    return savings
 
 
-def build_upscale_text(row):
-    inst = row["instance_name"]
-    shape = row["shape"]
-    region = row["region"]
-    comp = row["compartment"]
-
-    cpu_mean = to_float(row["cpu_mean_percent"]) or 0
-    mem_mean = to_float(row["mem_mean_percent"]) or 0
-    cpu_p95 = to_float(row["cpu_p95_percent"]) or 0
-    mem_p95 = to_float(row["mem_p95_percent"]) or 0
-    ocpus = to_float(row["ocpus"]) or 0
-    mem_gb = to_float(row["memory_gb"]) or 0
-
-    fator = 2.0
-    new_ocpus = ocpus * fator
-    new_mem = mem_gb * fator
-
-    current_cost = estimate_monthly_cost_brl(ocpus, mem_gb, shape)
-    new_cost = estimate_monthly_cost_brl(new_ocpus, new_mem, shape)
-    extra = max(0, new_cost - current_cost)
-
-    text = (
-        f"Instância: {inst} | Região: {region} | Compartment: {comp}\n"
-        f"Forma atual: {shape} | OCPUs: {ocpus} | Memória: {mem_gb} GB\n"
-        f"CPU média/P95: {cpu_mean:.2f}% / {cpu_p95:.2f}% | Memória média/P95: {mem_mean:.2f}% / {mem_p95:.2f}%\n"
-        f"Sugestão: avaliar aumento para ~{new_ocpus:.1f} OCPUs e ~{new_mem:.1f} GB de memória.\n"
-        f"Impacto estimado: +{format_money_brl(extra)}/mês.\n"
-    )
-    return text, extra
-
-
-def build_burstable_only_text(row):
-    inst = row["instance_name"]
-    shape = row["shape"]
-    region = row["region"]
-    comp = row["compartment"]
-
+def build_burstable(row):
     burst_enabled = row.get("burstable_enabled", "NO")
     baseline_percent = (row.get("baseline_percent") or "").strip()
 
     cpu_mean = to_float(row["cpu_mean_percent"]) or 0
     ocpus = to_float(row["ocpus"]) or 0
     mem_gb = to_float(row["memory_gb"]) or 0
+    shape = row["shape"]
 
-    # Se já é burstable com baseline configurada, pula
-    if burst_enabled == "YES" and baseline_percent in ("12.5%", "50%", "100%"):
-        return None, 0.0
+    if burst_enabled == "YES" and baseline_percent in ("12.5%", "50%"):
+        return 0
 
-    target = None
     frac = None
-
     if cpu_mean < 8:
-        target = "12.5%"
         frac = 0.125
     elif cpu_mean < 35:
-        target = "50%"
         frac = 0.5
 
-    if not target or frac is None:
-        return None, 0.0
+    if not frac:
+        return 0
 
     current_cost = estimate_monthly_cost_brl(ocpus, mem_gb, shape)
     new_cost = estimate_monthly_cost_brl(ocpus * frac, mem_gb, shape)
-    savings = max(0, current_cost - new_cost)
+    return max(0, current_cost - new_cost)
 
-    text = (
-        f"Instância: {inst} | Região: {region} | Compartment: {comp}\n"
-        f"Forma: {shape} | OCPUs: {ocpus} | Burstable atual: {baseline_percent or 'Desativado'}\n"
-        f"CPU média: {cpu_mean:.2f}%\n"
-        f"Sugestão: avaliar conversão para instância expansível com baseline {target}.\n"
-        f"Economia estimada (se convertido): {format_money_brl(savings)}/mês.\n"
-    )
-    return text, savings
+
+def get_top5_finops_impact(rows):
+    candidates = []
+
+    for r in rows:
+        rec = r.get("finops_recommendation", "")
+        if rec.startswith("DOWNSIZE"):
+            savings = build_downsize(r)
+        elif rec.startswith("BURSTABLE"):
+            savings = build_burstable(r)
+        else:
+            continue
+
+        if savings > 0:
+            candidates.append((r, savings))
+
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    return candidates[:5]
 
 
 def generate_report():
@@ -194,94 +149,56 @@ def generate_report():
         return
 
     doc = Document()
-    title = doc.add_heading("Relatório FinOps – CPU, Memória e Instâncias Expansíveis (OCI)", level=0)
-    title.alignment = 0
+    doc.add_heading("Relatório FinOps – OCI (CPU, Memória e Burstable)", level=0)
 
     p = doc.add_paragraph()
-    run = p.add_run("Gerado automaticamente a partir das métricas OCI Monitoring. Usuário responsável: Bruno Mendes Augusto.")
+    run = p.add_run("Autor: Bruno Mendes Augusto | Relatório gerado automaticamente.")
     run.italic = True
     run.font.size = Pt(9)
 
-    doc.add_paragraph("\nJanela de análise: últimos %d dias." % DAYS)
-    doc.add_paragraph("Valores estimados em real brasileiro (BRL), baseados na tabela pública de preços da Oracle para compute.")
+    doc.add_paragraph(f"Janela de análise: últimos {DAYS} dias.")
+    doc.add_paragraph("Valores estimados em real brasileiro (BRL).")
 
-    downsizes_texts = []
-    upscales_texts = []
-    burst_texts = []
+    # ================= TOP 5 =================
+    doc.add_heading("🏆 TOP 5 Oportunidades de Economia (Baixo Risco)", level=1)
 
-    total_down_savings = 0.0
-    total_up_extra = 0.0
-    total_burst_savings = 0.0
+    top5 = get_top5_finops_impact(rows)
+    total_top5 = 0
 
-    doc.add_heading("1. Recomendações de Redução (Downsize)", level=1)
-    for r in rows:
-        rec = r.get("finops_recommendation", "")
-        if rec.startswith("DOWNSIZE"):
-            text, savings = build_downsize_text(r)
-            downsizes_texts.append(text)
-            total_down_savings += savings
+    if top5:
+        table = doc.add_table(rows=1, cols=6)
+        hdr = table.rows[0].cells
+        hdr[0].text = "Rank"
+        hdr[1].text = "Instância"
+        hdr[2].text = "Região"
+        hdr[3].text = "Shape"
+        hdr[4].text = "Recomendação"
+        hdr[5].text = "Economia Estimada (R$/mês)"
 
-    if downsizes_texts:
-        for t in downsizes_texts:
-            doc.add_paragraph(t)
+        for idx, (r, savings) in enumerate(top5, start=1):
+            row = table.add_row().cells
+            row[0].text = str(idx)
+            row[1].text = r["instance_name"]
+            row[2].text = r["region"]
+            row[3].text = r["shape"]
+            row[4].text = r["finops_recommendation"]
+            row[5].text = format_money_brl(savings)
+            total_top5 += savings
+
+        doc.add_paragraph(f"\nEconomia potencial total do TOP 5: {format_money_brl(total_top5)}/mês.")
     else:
-        doc.add_paragraph("Nenhuma instância fortemente candidata a downsize identificada.")
-    doc.add_paragraph(" ")
+        doc.add_paragraph("Nenhuma oportunidade relevante identificada.")
 
-    doc.add_heading("2. Recomendações de Aumento (Upscale)", level=1)
-    for r in rows:
-        rec = r.get("finops_recommendation", "")
-        if rec == "UPSCALE":
-            text, extra = build_upscale_text(r)
-            upscales_texts.append(text)
-            total_up_extra += extra
-
-    if upscales_texts:
-        for t in upscales_texts:
-            doc.add_paragraph(t)
-    else:
-        doc.add_paragraph("Nenhuma instância com forte indicação de upscale encontrada.")
-    doc.add_paragraph(" ")
-
-    doc.add_heading("3. Oportunidades para Instâncias Expansíveis (Burstable)", level=1)
-    for r in rows:
-        burst_text, savings = build_burstable_only_text(r)
-        if burst_text:
-            burst_texts.append(burst_text)
-            total_burst_savings += savings
-
-    if burst_texts:
-        for t in burst_texts:
-            doc.add_paragraph(t)
-    else:
-        doc.add_paragraph("Nenhuma oportunidade clara para conversão em instância expansível foi identificada.")
-    doc.add_paragraph(" ")
-
-    doc.add_heading("4. Resumo Financeiro Consolidado (Estimativa)", level=1)
-
-    if total_down_savings > 0:
-        doc.add_paragraph(f"1. Reduções (Downsize): economia potencial de {format_money_brl(total_down_savings)}/mês.")
-    else:
-        doc.add_paragraph("1. Reduções (Downsize): nenhuma economia estimada.")
-    if total_up_extra > 0:
-        doc.add_paragraph(f"2. Aumentos (Upscale): impacto adicional potencial de {format_money_brl(total_up_extra)}/mês.")
-    else:
-        doc.add_paragraph("2. Aumentos (Upscale): nenhum aumento de custo estimado.")
-    if total_burst_savings > 0:
-        doc.add_paragraph(f"3. Instâncias Expansíveis (Burstable): economia potencial de {format_money_brl(total_burst_savings)}/mês.")
-    else:
-        doc.add_paragraph("3. Instâncias Expansíveis (Burstable): nenhuma economia estimada.")
-
-    net = total_down_savings + total_burst_savings - total_up_extra
-    if net >= 0:
-        doc.add_paragraph(f"\nEconomia líquida potencial (estimada): {format_money_brl(net)}/mês.")
-    else:
-        doc.add_paragraph(f"\nImpacto líquido potencial (estimado): +{format_money_brl(abs(net))}/mês.")
+    # ================= RESUMO =================
+    doc.add_heading("📊 Resumo Executivo", level=1)
+    doc.add_paragraph(
+        "Recomendação estratégica: atuar mensalmente apenas sobre as TOP 5 instâncias, "
+        "minimizando risco operacional e maximizando retorno financeiro."
+    )
 
     doc.add_paragraph(
-        "\nObservação: todos os valores são estimativas em BRL baseadas em preços de tabela simplificados. "
-        "Ajuste o mapeamento de preços no dicionário PRICE_MATRIX para refletir contratos ou descontos específicos de cada cliente. "
-        "Licenças de sistema operacional (por exemplo, Windows) não estão incluídas nesse cálculo."
+        "\nObservação: valores estimados com base em preços públicos OCI. "
+        "Licenças de sistema operacional não estão incluídas."
     )
 
     doc.save(DOCX_PATH)
