@@ -13,6 +13,10 @@ cfg = oci.config.from_file()
 tenancy_id = cfg["tenancy"]
 homedir = os.path.expanduser("~")
 
+DEFAULT_DAYS = 30
+DAYS = int(os.getenv("METRICS_DAYS", DEFAULT_DAYS))
+
+
 DAYS = int(os.getenv("METRICS_DAYS", "30"))
 
 CSV_PATH = os.path.join(homedir, f"Relatorio_CPU_Memoria_media_{DAYS}d_multi_region.csv")

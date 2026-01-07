@@ -5,6 +5,8 @@ from datetime import datetime
 from docx import Document
 from docx.shared import Pt
 
+DEFAULT_DAYS = 30
+DAYS = int(os.getenv("METRICS_DAYS", DEFAULT_DAYS))
 
 homedir = os.path.expanduser("~")
 DAYS = int(os.getenv("METRICS_DAYS", "30"))

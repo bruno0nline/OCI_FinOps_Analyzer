@@ -1,3 +1,7 @@
+DEFAULT_DAYS = 30
+DAYS = int(os.getenv("METRICS_DAYS", DEFAULT_DAYS))
+
+
 def get_top5(rows):
     savings = []
     costs = []
