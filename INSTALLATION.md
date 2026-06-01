@@ -28,8 +28,8 @@ O Cloud Shell já vem com Python e OCI CLI configurados:
 
 ```bash
 # 1. Clonar repositório
-git clone https://github.com/bruno0nline/OCI_FinOps_Analyzer.git
-cd OCI_FinOps_Analyzer
+git clone https://github.com/bruno0nline/oci-finops-analyzer.git
+cd oci-finops-analyzer
 
 # 2. Criar ambiente virtual
 python3 -m venv .venv
@@ -60,8 +60,8 @@ bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scrip
 oci setup config
 
 # 4. Clonar e configurar projeto
-git clone https://github.com/bruno0nline/OCI_FinOps_Analyzer.git
-cd OCI_FinOps_Analyzer
+git clone https://github.com/bruno0nline/oci-finops-analyzer.git
+cd oci-finops-analyzer
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -79,8 +79,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "iex ((New-Object System.
 oci setup config
 
 # 4. Clonar e configurar projeto
-git clone https://github.com/bruno0nline/OCI_FinOps_Analyzer.git
-cd OCI_FinOps_Analyzer
+git clone https://github.com/bruno0nline/oci-finops-analyzer.git
+cd oci-finops-analyzer
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
@@ -264,7 +264,7 @@ Se tudo estiver configurado corretamente, você verá:
 Se você encontrar problemas:
 
 1. Verifique a [documentação oficial do OCI CLI](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/cliconcepts.htm)
-2. Consulte as [Issues do GitHub](https://github.com/bruno0nline/OCI_FinOps_Analyzer/issues)
+2. Consulte as [Issues do GitHub](https://github.com/bruno0nline/oci-finops-analyzer/issues)
 3. Abra uma nova issue com detalhes do erro
 
 ---
@@ -274,7 +274,7 @@ Se você encontrar problemas:
 Para atualizar para a versão mais recente:
 
 ```bash
-cd OCI_FinOps_Analyzer
+cd oci-finops-analyzer
 git pull origin main
 pip install -r requirements.txt --upgrade
 ```
