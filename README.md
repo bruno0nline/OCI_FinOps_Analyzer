@@ -69,7 +69,7 @@ Ferramenta **open-source**, simples e poderosa, para analisar o uso de **CPU**, 
 ## 📁 Estrutura do Projeto
 
 ```
-OCI_FinOps_Analyzer/
+oci-finops-analyzer/
 ├── src/                                      # Código fonte
 │   ├── oci_metrics_cpu_mem_media_ndays.py   # Script principal FinOps (CSV/XLSX)
 │   ├── oci_metrics_cpu_mem_realtime.py      # Relatório rápido (30 min)
@@ -107,8 +107,8 @@ OCI_FinOps_Analyzer/
 ### 1. Clonar o repositório
 
 ```bash
-git clone https://github.com/bruno0nline/OCI_FinOps_Analyzer.git
-cd OCI_FinOps_Analyzer
+git clone https://github.com/bruno0nline/oci-finops-analyzer.git
+cd oci-finops-analyzer
 ```
 
 ### 2. Criar ambiente virtual
