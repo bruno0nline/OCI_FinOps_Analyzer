@@ -10,7 +10,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 ![Reports](https://img.shields.io/badge/Reports-CSV%20%7C%20XLSX%20%7C%20DOCX-success)
 
-**Ferramenta open-source para análise de CPU, Memória e Burstable Baseline em instâncias OCI Compute**
+**Ferramenta para análise de CPU, Memória e Burstable Baseline em instâncias OCI Compute**
 
 [Funcionalidades](#-funcionalidades) • [Instalação](#-instalação-rápida) • [Como Usar](#-como-usar) • [Exemplos](#-exemplos) • [Documentação](#-documentação)
 
