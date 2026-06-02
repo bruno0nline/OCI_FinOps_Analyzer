@@ -8,8 +8,8 @@
 
 ```bash
 # 1. Clone o repositório
-git clone https://github.com/bruno0nline/OCI_FinOps_Analyzer.git
-cd OCI_FinOps_Analyzer
+git clone https://github.com/bruno0nline/oci-finops-analyzer.git
+cd oci-finops-analyzer
 
 # 2. Configure o ambiente
 python3 -m venv .venv
@@ -181,7 +181,7 @@ Economia = (4 - 2) × 730 × R$ 0,06 = R$ 87,60/mês
 crontab -e
 
 # Execute todo dia 1º às 2h
-0 2 1 * * cd ~/OCI_FinOps_Analyzer && source .venv/bin/activate && export METRICS_DAYS=30 && python3 src/oci_metrics_cpu_mem_media_ndays.py && python3 src/oci_metrics_cpu_mem_word_report.py
+0 2 1 * * cd ~/oci-finops-analyzer && source .venv/bin/activate && export METRICS_DAYS=30 && python3 src/oci_metrics_cpu_mem_media_ndays.py && python3 src/oci_metrics_cpu_mem_word_report.py
 ```
 
 ---
@@ -205,5 +205,5 @@ crontab -e
 **Pronto para começar? Execute o primeiro comando e comece a economizar! 🚀**
 
 ```bash
-git clone https://github.com/bruno0nline/OCI_FinOps_Analyzer.git && cd OCI_FinOps_Analyzer
+git clone https://github.com/bruno0nline/oci-finops-analyzer.git && cd oci-finops-analyzer
 ```
