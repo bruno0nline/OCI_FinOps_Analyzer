@@ -7,8 +7,8 @@ Obrigado por considerar contribuir com o OCI FinOps Analyzer! 🎉
 ### 1. Fork e Clone
 
 ```bash
-git clone https://github.com/seu-usuario/OCI_FinOps_Analyzer.git
-cd OCI_FinOps_Analyzer
+git clone https://github.com/seu-usuario/oci-finops-analyzer.git
+cd oci-finops-analyzer
 ```
 
 ### 2. Crie um Ambiente Virtual
