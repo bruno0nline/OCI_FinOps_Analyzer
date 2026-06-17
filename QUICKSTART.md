@@ -2,7 +2,6 @@
 
 **Comece a otimizar seus custos OCI em 5 minutos!**
 
----
 
 ## ⚡ Início Rápido (Cloud Shell OCI)
 
@@ -26,7 +25,6 @@ python3 src/oci_metrics_cpu_mem_word_report.py
 
 **Pronto!** Seus relatórios estão em `~/`
 
----
 
 ## 📊 Seus Relatórios
 
@@ -38,28 +36,20 @@ Após a execução, você terá:
 ~/Relatorio_FinOps_CPU_Mem_30d_multi_region.docx     # Relatório executivo
 ```
 
----
 
 ## 🎯 Próximos Passos
 
 ### 1. Revise o Relatório Excel
 
 Abra o arquivo `.xlsx` e procure por:
-- 🟥 Linhas vermelhas = **DOWNSIZE** (economia imediata)
-- 🟨 Linhas amarelas = **UPSCALE** (atenção necessária)
-- 🔁 Linhas azuis = **BURSTABLE** (grande economia)
 
 ### 2. Priorize Ações
 
 **Alta Prioridade:**
-- DOWNSIZE-STRONG (economia > 50%)
-- BURSTABLE (economia > 40%)
 
 **Média Prioridade:**
-- DOWNSIZE (economia 30-50%)
 
 **Baixa Prioridade:**
-- UPSCALE (investimento necessário)
 
 ### 3. Implemente Mudanças
 
@@ -79,16 +69,10 @@ export METRICS_DAYS=7
 python3 src/oci_metrics_cpu_mem_media_ndays.py
 ```
 
----
 
 ## 📖 Documentação Completa
 
-- [README.md](README.md) - Visão geral completa
-- [INSTALLATION.md](INSTALLATION.md) - Instalação detalhada
-- [TIPS.md](TIPS.md) - Dicas e melhores práticas
-- [CONTRIBUTING.md](CONTRIBUTING.md) - Como contribuir
 
----
 
 ## 🆘 Precisa de Ajuda?
 
@@ -106,17 +90,10 @@ pip install -r requirements.txt
 ```
 
 **Sem dados?**
-- Aguarde 1 hora após criar instâncias
-- Verifique permissões OCI
-- Reduza METRICS_DAYS para 7
 
 ### Suporte
 
-- 📝 [Abra uma Issue](https://github.com/bruno0nline/OCI_FinOps_Analyzer/issues)
-- 💬 [Discussões](https://github.com/bruno0nline/OCI_FinOps_Analyzer/discussions)
-- 📧 Email: brunomendesaugusto@gmail.com
 
----
 
 ## 🎓 Aprenda Mais
 
@@ -142,35 +119,17 @@ VM.Standard.E4.Flex (4 OCPUs) → VM.Standard.E4.Flex (2 OCPUs)
 Economia = (4 - 2) × 730 × R$ 0,06 = R$ 87,60/mês
 ```
 
----
 
 ## 🎯 Metas Recomendadas
 
 ### Primeira Análise
-- [ ] Executar análise completa (30 dias)
-- [ ] Revisar relatório Excel
-- [ ] Identificar top 10 economias
-- [ ] Apresentar para gestão
 
 ### Primeiro Mês
-- [ ] Implementar DOWNSIZE-STRONG em DEV/QA
-- [ ] Converter instâncias para BURSTABLE
-- [ ] Monitorar resultados
-- [ ] Documentar economia
 
 ### Segundo Mês
-- [ ] Implementar DOWNSIZE em produção
-- [ ] Executar UPSCALE onde necessário
-- [ ] Automatizar análises mensais
-- [ ] Criar dashboard de acompanhamento
 
 ### Terceiro Mês
-- [ ] Revisar todas as mudanças
-- [ ] Calcular ROI total
-- [ ] Ajustar limites de recomendação
-- [ ] Expandir para outros recursos (Block Volumes, etc)
 
----
 
 ## 💡 Dica Pro
 
@@ -184,23 +143,13 @@ crontab -e
 0 2 1 * * cd ~/oci-finops-analyzer && source .venv/bin/activate && export METRICS_DAYS=30 && python3 src/oci_metrics_cpu_mem_media_ndays.py && python3 src/oci_metrics_cpu_mem_word_report.py
 ```
 
----
 
 ## 🌟 Casos de Sucesso
 
 ### Empresa A
-- **Instâncias analisadas:** 150
-- **Economia mensal:** R$ 18.500
-- **ROI:** 6 meses
-- **Tempo de implementação:** 2 meses
 
 ### Empresa B
-- **Instâncias analisadas:** 80
-- **Economia mensal:** R$ 12.300
-- **ROI:** 4 meses
-- **Tempo de implementação:** 1 mês
 
----
 
 **Pronto para começar? Execute o primeiro comando e comece a economizar! 🚀**
 

@@ -212,7 +212,7 @@ Sua contribuição ajuda a comunidade FinOps a otimizar custos e melhorar a efic
 
 ## 📞 Dúvidas?
 
-- Abra uma [Discussion](https://github.com/bruno0nline/OCI_FinOps_Analyzer/discussions)
+- Abra uma [Discussion](https://github.com/bruno0nline/oci-finops-analyzer/discussions)
 - Entre em contato: brunomendesaugusto@gmail.com
 
 ---

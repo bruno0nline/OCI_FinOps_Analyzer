@@ -62,5 +62,5 @@ e este projeto adere ao [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ---
 
-[Unreleased]: https://github.com/bruno0nline/OCI_FinOps_Analyzer/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/bruno0nline/OCI_FinOps_Analyzer/releases/tag/v1.0.0
+[Unreleased]: https://github.com/bruno0nline/oci-finops-analyzer/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/bruno0nline/oci-finops-analyzer/releases/tag/v1.0.0

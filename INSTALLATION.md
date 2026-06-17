@@ -264,7 +264,7 @@ Se tudo estiver configurado corretamente, você verá:
 Se você encontrar problemas:
 
 1. Verifique a [documentação oficial do OCI CLI](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/cliconcepts.htm)
-2. Consulte as [Issues do GitHub](https://github.com/bruno0nline/OCI_FinOps_Analyzer/issues)
+2. Consulte as [Issues do GitHub](https://github.com/bruno0nline/oci-finops-analyzer/issues)
 3. Abra uma nova issue com detalhes do erro
 
 ---

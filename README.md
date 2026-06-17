@@ -298,8 +298,8 @@ Você pode usar este código em ambientes pessoais ou corporativos.
 
 Encontrou um bug ou tem uma sugestão?
 
-- 🐛 [Abra uma Issue](https://github.com/bruno0nline/OCI_FinOps_Analyzer/issues)
-- 💬 [Discussões](https://github.com/bruno0nline/OCI_FinOps_Analyzer/discussions)
+- 🐛 [Abra uma Issue](https://github.com/bruno0nline/oci-finops-analyzer/issues)
+- 💬 [Discussões](https://github.com/bruno0nline/oci-finops-analyzer/discussions)
 
 ---
 

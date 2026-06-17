@@ -30,7 +30,7 @@ export METRICS_DAYS=90
 crontab -e
 
 # Executar todo dia 1º do mês às 2h da manhã
-0 2 1 * * cd /home/usuario/OCI_FinOps_Analyzer && source .venv/bin/activate && export METRICS_DAYS=30 && python3 src/oci_metrics_cpu_mem_media_ndays.py
+0 2 1 * * cd /home/usuario/oci-finops-analyzer && source .venv/bin/activate && export METRICS_DAYS=30 && python3 src/oci_metrics_cpu_mem_media_ndays.py
 ```
 
 ---
@@ -279,8 +279,8 @@ for instance in downsize_strong_instances:
 
 ## 💬 Comunidade
 
-- [GitHub Discussions](https://github.com/bruno0nline/OCI_FinOps_Analyzer/discussions)
-- [Issues](https://github.com/bruno0nline/OCI_FinOps_Analyzer/issues)
+- [GitHub Discussions](https://github.com/bruno0nline/oci-finops-analyzer/discussions)
+- [Issues](https://github.com/bruno0nline/oci-finops-analyzer/issues)
 
 ---
 
